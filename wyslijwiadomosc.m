@@ -1,0 +1,1 @@
+fprintf(t,wiadomosc);

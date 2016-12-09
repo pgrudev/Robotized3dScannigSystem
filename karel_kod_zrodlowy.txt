@@ -1,0 +1,291 @@
+﻿-- Pawel Grudzien
+-- Program sterujacy robotem Fanuc M10iA oraz pozycjonerem dwuosiowym. 
+-- Program realizuje komunikacje z komputerem poprzez socket messaging
+-- i przesylanie ustalonej ramki danych
+PROGRAM apol8
+%RWACCESS 
+--%STACKSIZE = 4000 
+%NOLOCKGROUP 
+%NOPAUSE=ERROR+COMMAND+TPENABLE 
+%ENVIRONMENT uif 
+%ENVIRONMENT sysdef 
+%ENVIRONMENT memo 
+%ENVIRONMENT kclop 
+%ENVIRONMENT bynam 
+%ENVIRONMENT fdev 
+%ENVIRONMENT flbt 
+%INCLUDE klevccdf 
+%INCLUDE klevkeys 
+%INCLUDE klevkmsk 
+-----ramka 46 znakow: [6 znakow dla kazdej wspolrzednej : '1' to minus + 6 wspolrzednych po 6 znakow,
+-----wpsolrzedne musza zostac podzielone przez 1000, bo ramka wysylana jest bez miejsc po przecinku -
+-----przewidziano 4 znaki dla pozycji i 2 znaki jako miejsca dziesiętne]
+-----ostatni znak to znak zamkniecia polaczenia - '1' zamknij polaczenie/koniec programu
+-- + krok obrotupozycjonera - 3 znaki
+VAR --zmienne
+
+file_var : FILE 		--plik do wymiany wiadomosci w message socketingu
+tmp_int  : INTEGER 
+tmp_int1 : INTEGER
+otwarto  : INTEGER 
+i            : INTEGER
+krok : REAL
+tmp_str  : STRING[128] 
+tmp_str1 : STRING[128] 
+STATUS   : INTEGER 
+entry    : INTEGER 
+wiad	 : STRING[46]
+loop1	 : BOOLEAN 		--glowna petla programu
+pozycja  : XYZWPR		--pozycja otrzymana 
+conf 	 : CONFIG
+
+flaga	 : STRING[1]
+ypoz,
+xs,
+ys,
+zs,
+ws,
+ps,
+rs 		 : REAL
+  
+--zmienne typu string
+
+
+
+
+------------------------------------------------------------------ROUTINES-----------------------------------------------------------------------------------
+
+ROUTINE ruch_poz(a : REAL; b : REAL)
+	VAR 	
+
+		real_array :ARRAY [2]OF REAL
+		pozycjoner	: JOINTPOS2 IN GROUP [2]
+
+	BEGIN
+		real_array[1] = a
+		real_array[2] = b
+		CNV_REL_JPOS(real_array, pozycjoner, STATUS)
+		$GROUP[2].$MOTYPE=JOINT
+		MOVE TO pozycjoner
+END  ruch_poz
+
+
+
+
+ROUTINE odbior (wiadomosc : STRING)
+	VAR
+	n_bytes : INTEGER
+	BEGIN
+		STATUS = IO_STATUS(file_var)
+		IF STATUS = 0 THEN
+			BYTES_AHEAD(file_var,n_bytes,STATUS)
+			--WRITE(n_bytes,CR)
+			READ file_var(wiadomosc::n_bytes)
+			STATUS = IO_STATUS(file_var)
+			
+		ENDIF
+END odbior
+
+
+
+ROUTINE wysylanie (message : STRING)
+	VAR
+	bufor : INTEGER
+	
+	BEGIN
+		STATUS = IO_STATUS(file_var)
+		IF STATUS = 0 THEN
+			bufor=STR_LEN(message)
+			WRITE file_var(message::bufor)
+			STATUS = IO_STATUS(file_var)
+			
+		ENDIF
+END wysylanie
+
+
+
+ROUTINE obrobka (ramka : STRING)
+VAR
+krokstr : STRING[3]
+xstr,
+ystr,
+zstr,
+wstr,
+pstr,
+rstr 	 : STRING [6]
+znkx,
+znky,
+znkz,
+znkw,
+znkp,
+znkr 	 : STRING [1]
+x,
+y,
+z,
+w,
+p,
+r 		 : REAL	
+BEGIN
+	-- rozbicie ramki na poszczegolne wspolrzedne oraz 6 bitow 
+	-- znaku dla kazdej wspolrzednej i bit zamkniecia
+	--WRITE(ramka,CR)
+	xstr=SUB_STR(ramka,7,6)  
+	ystr=SUB_STR(ramka,13,6) 
+	zstr=SUB_STR(ramka,19,6)
+	wstr=SUB_STR(ramka,25,6)
+	pstr=SUB_STR(ramka,31,6) 
+	rstr=SUB_STR(ramka,37,6) 
+	
+
+	znkx=SUB_STR(ramka,1,1) 
+	znky=SUB_STR(ramka,2,1)  
+	znkz=SUB_STR(ramka,3,1)  
+	znkw=SUB_STR(ramka,4,1)  
+	znkp=SUB_STR(ramka,5,1) 
+	znkr=SUB_STR(ramka,6,1)  
+	flaga=SUB_STR(ramka,43,1)
+	krokstr=SUB_STR(ramka,44,3)
+
+	-- zamiana stringow na real - 6 wspolrzednych
+	CNV_STR_REAL(xstr,x)
+	CNV_STR_REAL(ystr,y)
+	CNV_STR_REAL(zstr,z)
+	CNV_STR_REAL(wstr,w)
+	CNV_STR_REAL(pstr,p)
+	CNV_STR_REAL(rstr,r)
+	CNV_STR_REAL(krokstr,krok)
+
+
+	--wyznaczenie znaku +/- kazdej zz 6 wspolrzednych
+
+	IF znkx='1' THEN
+		x=-x
+	ENDIF
+
+	IF znky='1' THEN
+		y=-y
+	ENDIF
+
+	IF znkz='1' THEN
+		z=-z
+	ENDIF
+
+	IF znkw='1' THEN
+		w=-w
+	ENDIF
+
+	IF znkp='1' THEN
+		p=-p
+	ENDIF
+
+	IF znkr='1' THEN
+		r=-r
+	ENDIF
+
+	--podzielenie kazdej wspolrzednej przez 1000 - ramka wysylana jest bez miejsc dziesietnych
+	x=x/1000
+	y=y/1000
+	z=z/1000
+	w=w/1000
+	p=p/1000
+	r=r/1000
+	pozycja = POS(x,y,z,w,p,r,conf) 	--zapisanie pozycji przeslanej przez klienta
+
+	--wypisanie na panelu otrzymanych wspolrzednych i flagi
+	WRITE (CHR(128),CHR(137)) -- By default this will clear TPDISPLAY
+	WRITE('x=',x,CR)
+	WRITE('y=',y,CR)
+	WRITE('z=',z,CR)
+	WRITE('w=',w,CR)
+	WRITE('p=',p,CR)
+	WRITE('r=',r,CR)
+	WRITE('krok=',krok,CR)
+	DELAY 200
+END obrobka
+
+
+ ------------------------------------------------PROGRAM--------------------------------------
+BEGIN 	
+	--wstpena inicjalizacja zmiennych
+	otwarto = 0
+	pozycja = CURPOS(0,0)
+	loop1=TRUE
+	i=1
+	--wymagane ustawienia
+	$UTOOL=$MNUTOOL[1,9]		--narzedzie[4] - 
+	$UFRAME=$MNUFRAME[1,6]
+	$MOTYPE= LINEAR				--typ ruchu - liniowy, lepszy bedzie joint chyba
+	
+	UNPOS(CURPOS(0,0),xs,ys,zs,ws,ps,rs,conf)
+	MSG_DISCO('S4:',STATUS)			--na wszelki wypadek zamkniecie ew istniejacego polaczenia na sockecie S4
+	SET_FILE_ATR(file_var, ATR_IA)	-- dodatkowy atrybut na plik
+	SET_VAR(entry, '*SYSTEM*','$HOSTS_CFG[4].$SERVER_PORT',59002,STATUS)		--deklaracja socket messegingu 
+	DISMOUNT_DEV ('S4:', STATUS)
+	MSG_DISCO('S4:',STATUS) 	
+	
+	MOUNT_DEV ('S4:', STATUS)
+		IF STATUS = 0 THEN
+				MOUNT_DEV ('S4:', STATUS)
+				WRITE('Connecting..',CR) 
+				MSG_CONNECT('S4:',STATUS)  												--sprawdzenie statusu polaczenia, jesli polaczenie jest aktywne, to status=0
+				OPEN FILE file_var ('rw','S4:')
+				IF STATUS = 0 THEN 
+			
+					WHILE loop1=TRUE DO
+						
+						IF STATUS = 0 THEN 
+							
+								odbior(wiad)							--funkcja odbierajaca dane
+								obrobka(wiad)							--funkcja przetwarzajaca ramke danych
+								CHECK_EPOS((pozycja),$UFRAME,$UTOOL,STATUS)	--sprawdzenie osiagalnosci przeslanej pozycji
+								
+								
+								
+								IF flaga = '3' THEN				--obrot pozycjonera
+									IF i <= (360/krok-2) THEN   --TO JEST OK< ALE DLUGO TRWA DO TESTOW
+									--IF i<=(3) THEN		--do testow
+									
+										i=i+1
+										
+										ruch_poz(0,i*krok-240)	
+										WRITE('i=',i,CR)
+
+									ELSE
+										flaga='1'
+										i=0
+									ENDIF
+								ENDIF
+								
+								IF flaga ='0' THEN
+									ruch_poz(0,-240)
+									i=0
+								ENDIF
+								  
+								  
+								IF STATUS = 0 THEN
+									MOVE TO pozycja		-- przejazd robota do otrzymanej pozycji
+									wysylanie('1')
+								ELSE
+									WRITE('pozycja nieosiagalna',CR)
+									CLOSE FILE file_var 
+								ENDIF
+								IF flaga = '1' THEN				--zamykanie progmramu
+									wysylanie('2')
+									DELAY 3000
+									MSG_DISCO('S4:',STATUS) 					--rozlaczanie polaczenia
+									DISMOUNT_DEV ('S4:', STATUS)
+									WRITE('Disconnected.',CR) 
+									loop1=FALSE									--koniec programu
+								ENDIF
+								
+							
+					
+						ENDIF 
+					ENDWHILE	
+				ELSE
+				WRITE('Not connected',CR) 
+				ENDIF 
+				
+		
+		ENDIF
+END apol8
