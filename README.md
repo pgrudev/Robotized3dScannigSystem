@@ -1,4 +1,4 @@
-# RobotControlAplication
+# Robotized3dScannigSystem
 This aplication was part of my Master's Thesis. It is robotic system designed to scan 3d objects where computer was main control unit. 
 
 System contains multiple modules which are responsible for creating cloud points based on readings from laser proximity sensor mounted on Fanuc M10ia robot.
